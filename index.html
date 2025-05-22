@@ -92,7 +92,12 @@
             border-radius: 25px;
             color: white;
             text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+            transition: background 0.3s ease;
         }
+        .current-player.red { background: linear-gradient(45deg, #e74c3c, #c0392b); }
+        .current-player.yellow { background: linear-gradient(45deg, #f1c40f, #f39c12); }
+        .current-player.blue { background: linear-gradient(45deg, #3498db, #2980b9); }
+
 
         .timer {
             font-size: 1.5em;
@@ -161,7 +166,7 @@
 
         .game-board {
             display: grid;
-            grid-template-columns: repeat(7, 1fr);
+            grid-template-columns: repeat(7, 1fr); /* BOARD_SIZE로 변경 가능 */
             gap: 4px;
             background: #2c3e50;
             padding: 10px;
@@ -189,6 +194,9 @@
         .cell.selected {
             border-color: #3498db;
             box-shadow: 0 0 10px rgba(52, 152, 219, 0.5);
+        }
+        .cell.highlight-possible-move { /* 이동 가능한 칸 하이라이트 */
+            background-color: #a5d6a7; /* 연녹색 */
         }
 
         .piece {
@@ -235,6 +243,7 @@
             background: linear-gradient(45deg, #34495e, #2c3e50);
             border-radius: 2px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            z-index: 10; /* 말이 벽 위에 보이도록 */
         }
 
         .wall.top, .wall.bottom {
@@ -372,8 +381,8 @@
         <div id="playerSetup" class="player-setup">
             <h2>플레이어 수를 선택하세요</h2>
             <div class="player-count-selector">
-                <button class="player-count-btn" onclick="selectPlayerCount(2)">2명</button>
-                <button class="player-count-btn" onclick="selectPlayerCount(3)">3명</button>
+                <button class="player-count-btn" onclick="selectPlayerCount(2, event)">2명</button>
+                <button class="player-count-btn" onclick="selectPlayerCount(3, event)">3명</button>
             </div>
             <button class="btn btn-primary" onclick="startGame()" style="margin-top: 20px;">게임 시작</button>
         </div>
@@ -407,49 +416,59 @@
     <div id="gameOverModal" class="game-over" style="display: none;">
         <div class="game-over-content">
             <h2>🎉 게임 종료!</h2>
-            <div class="scores" id="finalScores"></div>
+            <div class="scores" id="finalScores">
+                </div>
             <button class="btn btn-primary" onclick="resetGame()">새 게임</button>
         </div>
     </div>
 
     <script>
+    (function() { // IIFE 시작
+        // 게임 상수
+        const BOARD_SIZE = 7;
+        const INITIAL_TIME_LEFT = 90;
+        const INITIAL_WALLS_PER_PLAYER = 25; // 2인 기준, 3인은 다를 수 있음 (규칙에 따라 조정)
+        const PLAYER_COLORS = ['red', 'yellow', 'blue'];
+        const PLAYER_NAMES = ['빨강', '노랑', '파랑'];
+
         // 게임 상태 전역 변수
         let gameState = {
             playerCount: 2,
             currentPlayer: 0,
-            phase: 1,
+            phase: 1, // 1: 첫 말 배치, 2: 두 번째 말 배치, 3: 게임 플레이
             board: [],
-            walls: [],
-            players: [],
-            selectedPiece: null,
-            pieceMoved: false,
-            timeLeft: 90,
+            walls: [], // walls[row][col] = { top: playerIndex | null, bottom: ..., left: ..., right: ... }
+            players: [], // { color, name, pieces: [{row, col}, {row, col}], wallsRemaining, wallBreakUsed }
+            selectedPiece: null, // {row, col, pieceIndex}
+            pieceMoved: false, // 현재 턴에 말을 이동했는지 여부
+            timeLeft: INITIAL_TIME_LEFT,
             timer: null,
             wallBreakMode: false,
             gameStarted: false,
-            placementOrder: [],
-            reversePlacementIndex: 0
+            placementOrder: [], // Phase 1 배치 순서 기록
+            reversePlacementIndex: 0 // Phase 2 배치 순서 인덱스
         };
 
-        const playerColors = ['red', 'yellow', 'blue'];
-        const playerNames = ['빨강', '노랑', '파랑'];
-
         // 플레이어 수 선택
-        function selectPlayerCount(count) {
+        window.selectPlayerCount = function(count, event) {
             console.log('플레이어 수 선택:', count);
             gameState.playerCount = count;
             
-            // 모든 버튼에서 selected 클래스 제거
             document.querySelectorAll('.player-count-btn').forEach(btn => {
                 btn.classList.remove('selected');
             });
             
-            // 클릭된 버튼에 selected 클래스 추가
-            event.target.classList.add('selected');
+            if (event && event.target) {
+                event.target.classList.add('selected');
+            } else { // DOMContentLoaded에서 호출 시 event가 없을 수 있음
+                const buttons = document.querySelectorAll('.player-count-btn');
+                if (count === 2 && buttons[0]) buttons[0].classList.add('selected');
+                else if (count === 3 && buttons[1]) buttons[1].classList.add('selected');
+            }
         }
 
         // 게임 시작
-        function startGame() {
+        window.startGame = function() {
             console.log('게임 시작 함수 호출됨');
             
             const selectedBtn = document.querySelector('.player-count-btn.selected');
@@ -461,6 +480,7 @@
             console.log('화면 전환 중...');
             document.getElementById('playerSetup').style.display = 'none';
             document.getElementById('gameArea').style.display = 'block';
+            document.getElementById('gameOverModal').style.display = 'none';
             
             console.log('게임 초기화 중...');
             initializeGame();
@@ -472,8 +492,8 @@
             gameState.gameStarted = true;
             gameState.phase = 1;
             gameState.currentPlayer = 0;
-            gameState.board = Array(7).fill().map(() => Array(7).fill(null));
-            gameState.walls = Array(7).fill().map(() => Array(7).fill().map(() => ({
+            gameState.board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(null));
+            gameState.walls = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(null).map(() => ({
                 top: null, bottom: null, left: null, right: null
             })));
             gameState.selectedPiece = null;
@@ -486,10 +506,10 @@
             gameState.players = [];
             for (let i = 0; i < gameState.playerCount; i++) {
                 gameState.players.push({
-                    color: playerColors[i],
-                    name: playerNames[i],
-                    pieces: [{row: -1, col: -1}, {row: -1, col: -1}],
-                    wallsRemaining: 25,
+                    color: PLAYER_COLORS[i],
+                    name: PLAYER_NAMES[i],
+                    pieces: [{row: -1, col: -1}, {row: -1, col: -1}], // 아직 배치되지 않음
+                    wallsRemaining: INITIAL_WALLS_PER_PLAYER, // 플레이어 수에 따라 벽 개수 조정 필요 시 여기에 로직 추가
                     wallBreakUsed: false
                 });
             }
@@ -497,16 +517,17 @@
             createBoard();
             updateUI();
             startTimer();
-            console.log('게임 초기화 완료');
+            console.log('게임 초기화 완료. 현재 플레이어:', gameState.players[gameState.currentPlayer].name);
         }
 
         // 보드 생성
         function createBoard() {
-            const board = document.getElementById('gameBoard');
-            board.innerHTML = '';
+            const boardElement = document.getElementById('gameBoard');
+            boardElement.innerHTML = '';
+            boardElement.style.gridTemplateColumns = `repeat(${BOARD_SIZE}, 1fr)`;
 
-            for (let row = 0; row < 7; row++) {
-                for (let col = 0; col < 7; col++) {
+            for (let row = 0; row < BOARD_SIZE; row++) {
+                for (let col = 0; col < BOARD_SIZE; col++) {
                     const cell = document.createElement('div');
                     cell.className = 'cell';
                     cell.dataset.row = row;
@@ -515,65 +536,90 @@
                         handleCellClick(parseInt(this.dataset.row), parseInt(this.dataset.col), this);
                     });
                     
-                    // 벽 배치를 위한 이벤트 추가
-                    addWallPlacementEvents(cell);
-                    
-                    board.appendChild(cell);
+                    addWallPlacementEvents(cell); // 벽 배치 이벤트 (터치용)
+                    boardElement.appendChild(cell);
                 }
             }
         }
-
+        
         // 셀 클릭 처리
         function handleCellClick(row, col, cellElement) {
-            console.log('셀 클릭:', row, col, '현재 단계:', gameState.phase);
+            console.log('셀 클릭:', row, col, '현재 단계:', gameState.phase, '말 이동 여부:', gameState.pieceMoved);
 
-            if (gameState.phase <= 2) {
-                placePiece(row, col);
-            } else {
-                if (gameState.wallBreakMode) {
-                    handleWallBreak(row, col);
-                } else if (gameState.selectedPiece) {
-                    movePiece(row, col);
-                } else {
-                    selectPiece(row, col, cellElement);
+            if (gameState.wallBreakMode) {
+                handleWallBreak(row, col); // 벽 부수기 시도
+                return;
+            }
+
+            if (gameState.phase <= 2) { // 말 배치 단계
+                placePieceDuringSetup(row, col);
+            } else { // 게임 플레이 단계
+                if (gameState.selectedPiece) { // 이미 선택된 말이 있을 때
+                    if (gameState.selectedPiece.row === row && gameState.selectedPiece.col === col) {
+                        // 선택된 말을 다시 클릭 (벽 배치 시도 또는 선택 취소)
+                        if (gameState.pieceMoved) {
+                             alert('벽을 배치하려면 이동한 말을 터치 후 스와이프하거나, 벽 배치 버튼을 사용하세요. (현재 클릭으로는 방향 지정 불가)');
+                             // 향후 개선: 클릭으로 벽 방향 선택 UI 제공 또는 기본 방향으로 배치
+                        } else {
+                            // 선택 취소 (또는 다른 액션)
+                            gameState.selectedPiece = null;
+                            cellElement.classList.remove('selected');
+                            removePossibleMoveHighlights();
+                        }
+                    } else {
+                        movePiece(row, col); // 다른 칸 클릭 시 이동 시도
+                    }
+                } else { // 선택된 말이 없을 때
+                    selectPiece(row, col, cellElement); // 말 선택 시도
                 }
             }
         }
 
         // 말 배치 (Phase 1 & 2)
-        function placePiece(row, col) {
+        function placePieceDuringSetup(row, col) {
             if (gameState.board[row][col] !== null) {
                 alert('이미 말이 있는 위치입니다!');
                 return;
             }
 
             const currentPlayerObj = gameState.players[gameState.currentPlayer];
-            const pieceIndex = gameState.phase === 1 ? 0 : 1;
+            const pieceIndex = gameState.phase === 1 ? 0 : 1; // 첫 번째 말 또는 두 번째 말
 
-            // 말 배치
-            gameState.board[row][col] = {
-                player: gameState.currentPlayer,
-                pieceIndex: pieceIndex
-            };
+            // 이미 해당 플레이어가 말을 그 위치에 배치했는지 확인 (중복 배치 방지)
+            if (currentPlayerObj.pieces[pieceIndex].row !== -1) {
+                 // 이미 이 단계에서 말을 놓았다면, 다른 플레이어 턴임에도 불구하고 클릭되는 경우 방지
+                if ( (gameState.phase === 1 && gameState.placementOrder.includes(gameState.currentPlayer) ) ||
+                     (gameState.phase === 2 && gameState.players[gameState.placementOrder[gameState.reversePlacementIndex]].pieces[1].row !== -1 ) ) {
+                    // console.log("이미 말을 배치했습니다. 다음 플레이어 차례입니다.");
+                    // return; // 이 부분은 이미 턴이 넘어갔을 것이므로 사실상 불필요할 수 있음
+                }
+            }
+
+
+            gameState.board[row][col] = { player: gameState.currentPlayer, pieceIndex: pieceIndex };
             currentPlayerObj.pieces[pieceIndex] = {row, col};
+            console.log(`${currentPlayerObj.name} 플레이어, ${pieceIndex + 1}번째 말 (${row}, ${col})에 배치`);
 
             if (gameState.phase === 1) {
                 gameState.placementOrder.push(gameState.currentPlayer);
                 gameState.currentPlayer = (gameState.currentPlayer + 1) % gameState.playerCount;
                 
-                if (gameState.placementOrder.length === gameState.playerCount) {
+                if (gameState.placementOrder.length === gameState.playerCount) { // 모든 플레이어가 첫 번째 말을 배치 완료
                     gameState.phase = 2;
-                    gameState.reversePlacementIndex = gameState.playerCount - 1;
+                    gameState.reversePlacementIndex = gameState.playerCount - 1; // 마지막 플레이어부터 시작
                     gameState.currentPlayer = gameState.placementOrder[gameState.reversePlacementIndex];
+                    console.log("Phase 2 시작. 현재 플레이어:", gameState.players[gameState.currentPlayer].name);
                 }
             } else if (gameState.phase === 2) {
                 gameState.reversePlacementIndex--;
                 
                 if (gameState.reversePlacementIndex >= 0) {
                     gameState.currentPlayer = gameState.placementOrder[gameState.reversePlacementIndex];
-                } else {
+                    console.log("Phase 2 진행. 현재 플레이어:", gameState.players[gameState.currentPlayer].name);
+                } else { // 모든 플레이어가 두 번째 말을 배치 완료
                     gameState.phase = 3;
-                    gameState.currentPlayer = 0;
+                    gameState.currentPlayer = 0; // 첫 번째 플레이어부터 게임 시작
+                    console.log("Phase 3 시작. 현재 플레이어:", gameState.players[gameState.currentPlayer].name);
                 }
             }
 
@@ -582,125 +628,233 @@
             resetTimer();
         }
 
+        function highlightPossibleMoves(fromRow, fromCol) {
+            removePossibleMoveHighlights();
+            const directions = [[0,1], [0,-1], [1,0], [-1,0], [0,2], [0,-2], [2,0], [-2,0]]; // 1칸, 2칸 이동
+
+            for (const [dr, dc] of directions) {
+                const toRow = fromRow + dr;
+                const toCol = fromCol + dc;
+
+                if (toRow >= 0 && toRow < BOARD_SIZE && toCol >= 0 && toCol < BOARD_SIZE) {
+                    if (isValidMove(fromRow, fromCol, toRow, toCol)) {
+                        const cell = document.querySelector(`.cell[data-row="${toRow}"][data-col="${toCol}"]`);
+                        if (cell) {
+                            cell.classList.add('highlight-possible-move');
+                        }
+                    }
+                }
+            }
+        }
+
+        function removePossibleMoveHighlights() {
+            document.querySelectorAll('.cell.highlight-possible-move').forEach(cell => {
+                cell.classList.remove('highlight-possible-move');
+            });
+        }
+
+
         // 말 선택
         function selectPiece(row, col, cellElement) {
-            const piece = gameState.board[row][col];
-            if (!piece || piece.player !== gameState.currentPlayer) {
+            const pieceData = gameState.board[row][col];
+            if (!pieceData || pieceData.player !== gameState.currentPlayer) {
+                console.log("선택 불가: 자신의 말이 아니거나 빈 칸입니다.");
+                return;
+            }
+            if (gameState.pieceMoved) {
+                alert("이미 말을 움직였습니다. 벽을 배치하거나 턴을 넘기세요.");
                 return;
             }
 
-            document.querySelectorAll('.cell').forEach(cell => {
-                cell.classList.remove('selected');
-            });
+            // 기존 선택된 셀 스타일 제거
+            document.querySelectorAll('.cell.selected').forEach(cell => cell.classList.remove('selected'));
 
-            gameState.selectedPiece = {row, col, pieceIndex: piece.pieceIndex};
+            gameState.selectedPiece = {row, col, pieceIndex: pieceData.pieceIndex};
             cellElement.classList.add('selected');
+            console.log(`${gameState.players[pieceData.player].name}의 말 (${row},${col}) 선택됨`);
+            highlightPossibleMoves(row, col);
         }
 
         // 말 이동
-        function movePiece(row, col) {
+        function movePiece(toRow, toCol) {
             if (!gameState.selectedPiece) return;
-
-            const fromRow = gameState.selectedPiece.row;
-            const fromCol = gameState.selectedPiece.col;
-            
-            if (!isValidMove(fromRow, fromCol, row, col)) {
-                alert('이동할 수 없는 위치입니다!');
+            if (gameState.pieceMoved) {
+                alert("한 턴에 한 번만 이동할 수 있습니다.");
                 return;
             }
 
-            const piece = gameState.board[fromRow][fromCol];
-            gameState.board[fromRow][fromCol] = null;
-            gameState.board[row][col] = piece;
+            const {row: fromRow, col: fromCol, pieceIndex} = gameState.selectedPiece;
             
-            gameState.players[gameState.currentPlayer].pieces[piece.pieceIndex] = {row, col};
-            gameState.selectedPiece = null;
+            if (!isValidMove(fromRow, fromCol, toRow, toCol)) {
+                alert('이동할 수 없는 위치입니다! (다른 말이 있거나 벽으로 막혀있습니다)');
+                return;
+            }
+
+            // 기존 위치의 말 정보 삭제
+            gameState.board[fromRow][fromCol] = null;
+            // 새 위치에 말 정보 업데이트
+            gameState.board[toRow][toCol] = { player: gameState.currentPlayer, pieceIndex: pieceIndex };
+            // 플레이어 객체에 말 위치 업데이트
+            gameState.players[gameState.currentPlayer].pieces[pieceIndex] = {row: toRow, col: toCol};
+            
+            console.log(`${gameState.players[gameState.currentPlayer].name} 말 (${fromRow},${fromCol}) -> (${toRow},${toCol}) 이동`);
+            
+            gameState.selectedPiece = {row: toRow, col: toCol, pieceIndex: pieceIndex}; // 선택된 말 정보 업데이트 (이동한 위치로)
             gameState.pieceMoved = true;
 
-            document.querySelectorAll('.cell').forEach(cell => {
-                cell.classList.remove('selected');
-            });
+            removePossibleMoveHighlights();
+            updateBoard(); // 보드 UI 전체 업데이트
 
-            updateBoard();
-            
-            const movedCell = document.querySelector(`[data-row="${row}"][data-col="${col}"]`);
-            movedCell.classList.add('selected');
+            // 이동한 셀에 selected 클래스 다시 적용
+            const newCellElement = document.querySelector(`.cell[data-row="${toRow}"][data-col="${toCol}"]`);
+            if (newCellElement) {
+                 // 이전 selected는 updateBoard()에서 지워지므로 다시 추가.
+                document.querySelectorAll('.cell.selected').forEach(cell => cell.classList.remove('selected'));
+                newCellElement.classList.add('selected');
+            }
+            updateUI(); // 남은 벽 개수 등 업데이트
+            // 타이머는 벽 배치 후 또는 턴 종료 시 리셋
         }
 
         // 이동 가능성 검사
         function isValidMove(fromRow, fromCol, toRow, toCol) {
-            if (gameState.board[toRow][toCol] !== null) {
-                return false;
+            if (toRow < 0 || toRow >= BOARD_SIZE || toCol < 0 || toCol >= BOARD_SIZE) return false; // 보드 범위 밖
+            if (gameState.board[toRow][toCol] !== null) return false; // 목적지에 다른 말이 있음
+
+            const dRow = toRow - fromRow;
+            const dCol = toCol - fromCol;
+            const absDRow = Math.abs(dRow);
+            const absDCol = Math.abs(dCol);
+
+            // 1칸 이동 (상하좌우)
+            if ((absDRow === 1 && absDCol === 0) || (absDRow === 0 && absDCol === 1)) {
+                // 벽 확인
+                if (dRow === 1) return !gameState.walls[fromRow][fromCol].bottom && !gameState.walls[toRow][toCol].top; // 아래로
+                if (dRow === -1) return !gameState.walls[fromRow][fromCol].top && !gameState.walls[toRow][toCol].bottom; // 위로
+                if (dCol === 1) return !gameState.walls[fromRow][fromCol].right && !gameState.walls[toRow][toCol].left; // 오른쪽으로
+                if (dCol === -1) return !gameState.walls[fromRow][fromCol].left && !gameState.walls[toRow][toCol].right; // 왼쪽으로
+                return true; // 이 부분은 사실상 위 조건들에서 다 걸러짐
             }
 
-            const deltaRow = Math.abs(toRow - fromRow);
-            const deltaCol = Math.abs(toCol - fromCol);
+            // 2칸 이동 (상하좌우)
+            if ((absDRow === 2 && absDCol === 0) || (absDRow === 0 && absDCol === 2)) {
+                const midRow = fromRow + dRow / 2;
+                const midCol = fromCol + dCol / 2;
 
-            if (!((deltaRow === 0 && (deltaCol === 1 || deltaCol === 2)) || 
-                  (deltaCol === 0 && (deltaRow === 1 || deltaRow === 2)))) {
-                return false;
-            }
+                // 중간 칸에 다른 말이 없어야 하고, 벽도 없어야 함
+                if (gameState.board[midRow][midCol] !== null) return false;
 
-            if (gameState.wallBreakMode) {
+                // 첫 번째 스텝 벽 확인
+                if (dRow === 2) { // 아래로 2칸
+                    if (gameState.walls[fromRow][fromCol].bottom || gameState.walls[midRow][midCol].top) return false;
+                    if (gameState.walls[midRow][midCol].bottom || gameState.walls[toRow][toCol].top) return false;
+                } else if (dRow === -2) { // 위로 2칸
+                    if (gameState.walls[fromRow][fromCol].top || gameState.walls[midRow][midCol].bottom) return false;
+                    if (gameState.walls[midRow][midCol].top || gameState.walls[toRow][toCol].bottom) return false;
+                } else if (dCol === 2) { // 오른쪽으로 2칸
+                    if (gameState.walls[fromRow][fromCol].right || gameState.walls[midRow][midCol].left) return false;
+                    if (gameState.walls[midRow][midCol].right || gameState.walls[toRow][toCol].left) return false;
+                } else if (dCol === -2) { // 왼쪽으로 2칸
+                    if (gameState.walls[fromRow][fromCol].left || gameState.walls[midRow][midCol].right) return false;
+                    if (gameState.walls[midRow][midCol].left || gameState.walls[toRow][toCol].right) return false;
+                }
                 return true;
             }
-
-            // 경로상의 벽 확인 (간단한 버전)
-            return true;
+            return false; // 그 외의 이동은 불가
         }
-
-        // 벽 배치 (간단한 버전 - 클릭한 셀 주변에 랜덤 배치)
-        function placeWall(row, col) {
-            if (!gameState.pieceMoved) {
-                alert('먼저 말을 이동해주세요!');
-                return;
-            }
-
-            const currentPlayerObj = gameState.players[gameState.currentPlayer];
-            if (currentPlayerObj.wallsRemaining <= 0) {
-                alert('벽이 모두 소진되었습니다!');
-                return;
-            }
-
-            // 간단한 벽 배치 - 상단에 배치
-            const direction = 'top';
-            if (!gameState.walls[row][col][direction]) {
-                gameState.walls[row][col][direction] = gameState.currentPlayer;
-                currentPlayerObj.wallsRemaining--;
-                updateBoard();
-                endTurn();
-            }
-        }
-
+        
         // 벽 부수기 모드 토글
-        function toggleWallBreakMode() {
+        window.toggleWallBreakMode = function() {
             const currentPlayerObj = gameState.players[gameState.currentPlayer];
-            if (currentPlayerObj.wallBreakUsed) {
+            if (currentPlayerObj.wallBreakUsed && !gameState.wallBreakMode) { // 이미 사용했고, 현재 비활성화 상태면 더 이상 못 켬
                 alert('벽 부수기는 게임당 1회만 사용할 수 있습니다!');
                 return;
             }
+             if (gameState.phase < 3) {
+                alert('말 배치가 완료된 후 사용할 수 있습니다.');
+                return;
+            }
+            if (gameState.pieceMoved) {
+                alert('말을 움직인 후에는 벽 부수기를 사용할 수 없습니다. 다음 턴에 시도하세요.');
+                return;
+            }
+
 
             gameState.wallBreakMode = !gameState.wallBreakMode;
+            if (gameState.wallBreakMode) {
+                gameState.selectedPiece = null; // 말 선택 해제
+                document.querySelectorAll('.cell.selected').forEach(cell => cell.classList.remove('selected'));
+                removePossibleMoveHighlights();
+                alert('벽 부수기 모드 활성화! 부술 벽이 있는 칸을 선택하세요.');
+            } else {
+                alert('벽 부수기 모드 비활성화.');
+            }
             updateUI();
         }
 
         // 벽 부수기 처리
         function handleWallBreak(row, col) {
-            // 간단한 구현
-            alert('벽 부수기 기능은 추후 구현됩니다.');
+            if (!gameState.wallBreakMode) return;
+            
+            // TODO: 실제 벽 부수기 로직 구현 필요
+            // 예: 어떤 벽을 부술지 선택하는 UI (상하좌우) 또는 자동으로 가장 최근 벽 등
+            // 현재는 어떤 벽이든 하나라도 있으면 부쉈다고 가정하고 턴 넘김 (임시)
+            let wallBroken = false;
+            const cellWalls = gameState.walls[row][col];
+            for (const dir in cellWalls) {
+                if (cellWalls[dir] !== null) {
+                    cellWalls[dir] = null; // 해당 방향 벽 제거
+                    // 인접 셀의 대응 벽도 제거해야 함
+                    if (dir === 'top' && row > 0) gameState.walls[row-1][col].bottom = null;
+                    else if (dir === 'bottom' && row < BOARD_SIZE - 1) gameState.walls[row+1][col].top = null;
+                    else if (dir === 'left' && col > 0) gameState.walls[row][col-1].right = null;
+                    else if (dir === 'right' && col < BOARD_SIZE - 1) gameState.walls[row][col+1].left = null;
+                    wallBroken = true;
+                    break; 
+                }
+            }
+            // 인접 셀 기준으로도 확인 (벽은 두 셀에 걸쳐 있으므로)
+            if (!wallBroken && row > 0 && gameState.walls[row-1][col].bottom !== null) { // 위쪽 셀의 아래쪽 벽
+                gameState.walls[row-1][col].bottom = null; gameState.walls[row][col].top = null; wallBroken = true;
+            } else if (!wallBroken && row < BOARD_SIZE - 1 && gameState.walls[row+1][col].top !== null) { // 아래쪽 셀의 위쪽 벽
+                gameState.walls[row+1][col].top = null; gameState.walls[row][col].bottom = null; wallBroken = true;
+            } else if (!wallBroken && col > 0 && gameState.walls[row][col-1].right !== null) { // 왼쪽 셀의 오른쪽 벽
+                 gameState.walls[row][col-1].right = null; gameState.walls[row][col].left = null; wallBroken = true;
+            } else if (!wallBroken && col < BOARD_SIZE - 1 && gameState.walls[row][col+1].left !== null) { // 오른쪽 셀의 왼쪽 벽
+                 gameState.walls[row][col+1].left = null; gameState.walls[row][col].right = null; wallBroken = true;
+            }
+
+
+            if (wallBroken) {
+                alert(`(${row}, ${col}) 근처의 벽을 부쉈습니다!`);
+                gameState.players[gameState.currentPlayer].wallBreakUsed = true;
+                gameState.wallBreakMode = false; // 모드 자동 비활성화
+                updateBoard();
+                endTurn(); // 벽 부수기가 하나의 행동으로 턴 소모
+            } else {
+                alert(`(${row}, ${col}) 주변에 부술 수 있는 벽이 없습니다.`);
+            }
         }
 
         // 턴 종료
         function endTurn() {
+            console.log("턴 종료:", gameState.players[gameState.currentPlayer].name);
             gameState.pieceMoved = false;
-            gameState.wallBreakMode = false;
+            gameState.wallBreakMode = false; // 턴 종료 시 벽 부수기 모드 해제
             gameState.selectedPiece = null;
             
-            document.querySelectorAll('.cell').forEach(cell => {
-                cell.classList.remove('selected');
-            });
+            document.querySelectorAll('.cell.selected').forEach(cell => cell.classList.remove('selected'));
+            removePossibleMoveHighlights();
 
             gameState.currentPlayer = (gameState.currentPlayer + 1) % gameState.playerCount;
+            console.log("다음 플레이어:", gameState.players[gameState.currentPlayer].name);
+            
+            // TODO: 게임 종료 조건 확인 (예: 모든 플레이어가 움직일 수 없거나, 특정 점수 도달 등)
+            // if (checkGameOver()) {
+            //     handleGameOver();
+            //     return;
+            // }
+
             updateUI();
             resetTimer();
         }
@@ -708,10 +862,11 @@
         // 타이머 관련 함수들
         function startTimer() {
             clearInterval(gameState.timer);
-            gameState.timeLeft = 90;
+            gameState.timeLeft = INITIAL_TIME_LEFT;
+            updateTimerDisplay(); // 즉시 시간 표시 업데이트
             gameState.timer = setInterval(() => {
                 gameState.timeLeft--;
-                updateTimer();
+                updateTimerDisplay();
                 
                 if (gameState.timeLeft <= 0) {
                     handleTimeOut();
@@ -720,12 +875,16 @@
         }
 
         function resetTimer() {
-            gameState.timeLeft = 90;
+            // startTimer(); // startTimer가 clearInterval을 이미 호출함
+            clearInterval(gameState.timer);
+            gameState.timeLeft = INITIAL_TIME_LEFT;
+            updateTimerDisplay();
             startTimer();
         }
 
-        function updateTimer() {
+        function updateTimerDisplay() {
             const timerElement = document.getElementById('timer');
+            if (!timerElement) return;
             timerElement.textContent = gameState.timeLeft;
             
             timerElement.classList.remove('warning', 'danger');
@@ -738,12 +897,14 @@
 
         function handleTimeOut() {
             clearInterval(gameState.timer);
-            alert('시간 초과! 다음 플레이어 턴입니다.');
+            alert(`${gameState.players[gameState.currentPlayer].name} 플레이어 시간 초과! 다음 플레이어 턴입니다.`);
             endTurn();
         }
 
         // UI 업데이트
         function updateUI() {
+            if (!gameState.gameStarted) return; // 게임 시작 전에는 UI 업데이트 안 함
+
             const currentPlayerElement = document.getElementById('currentPlayer');
             const wallsRemainingElement = document.getElementById('wallsRemaining');
             const wallBreakBtn = document.getElementById('wallBreakBtn');
@@ -757,41 +918,43 @@
             }
 
             const currentPlayerObj = gameState.players[gameState.currentPlayer];
-            currentPlayerElement.textContent = `${currentPlayerObj.name} 플레이어`;
+            currentPlayerElement.textContent = `${currentPlayerObj.name} (${currentPlayerObj.color}) 플레이어`;
             
-            // 플레이어 색상 설정
-            const colorMap = {
-                'red': 'linear-gradient(45deg, #e74c3c, #c0392b)',
-                'yellow': 'linear-gradient(45deg, #f1c40f, #f39c12)',
-                'blue': 'linear-gradient(45deg, #3498db, #2980b9)'
-            };
-            currentPlayerElement.style.background = colorMap[currentPlayerObj.color];
+            // 플레이어 색상 클래스 설정
+            PLAYER_COLORS.forEach(color => currentPlayerElement.classList.remove(color));
+            currentPlayerElement.classList.add(currentPlayerObj.color);
 
             wallsRemainingElement.textContent = `벽 ${currentPlayerObj.wallsRemaining}개 남음`;
 
             if (gameState.phase === 3) {
                 wallBreakBtn.style.display = 'inline-block';
-                wallBreakBtn.disabled = currentPlayerObj.wallBreakUsed;
-                wallBreakBtn.textContent = currentPlayerObj.wallBreakUsed ? 
-                    '🔨 벽 부수기 (사용완료)' : 
-                    (gameState.wallBreakMode ? '🔨 벽 부수기 (활성화)' : '🔨 벽 부수기 (1회)');
+                wallBreakBtn.disabled = currentPlayerObj.wallBreakUsed || gameState.pieceMoved; // 사용했거나, 말 이동 후에는 비활성화
+                
+                let btnText = '🔨 벽 부수기 (1회)';
+                if (currentPlayerObj.wallBreakUsed) {
+                    btnText = '🔨 벽 부수기 (사용완료)';
+                } else if (gameState.wallBreakMode) {
+                    btnText = '🔨 벽 부수기 (활성화)';
+                }
+                wallBreakBtn.textContent = btnText;
+
             } else {
                 wallBreakBtn.style.display = 'none';
             }
-
             updateBlinkingPieces();
         }
-
+        
         // 깜빡이는 말 업데이트
         function updateBlinkingPieces() {
-            document.querySelectorAll('.piece').forEach(piece => {
-                piece.classList.remove('blinking');
-            });
+            document.querySelectorAll('.piece.blinking').forEach(p => p.classList.remove('blinking'));
 
-            if (gameState.phase === 3) {
-                gameState.players[gameState.currentPlayer].pieces.forEach(piece => {
-                    if (piece.row !== -1) {
-                        const cell = document.querySelector(`[data-row="${piece.row}"][data-col="${piece.col}"]`);
+            if (gameState.phase < 3 || !gameState.players[gameState.currentPlayer]) return;
+
+            // 현재 턴 플레이어의 말만 깜빡이도록 (선택되지 않았을 때)
+            if (!gameState.selectedPiece && !gameState.pieceMoved) {
+                 gameState.players[gameState.currentPlayer].pieces.forEach(piecePos => {
+                    if (piecePos.row !== -1) { // 배치된 말만
+                        const cell = document.querySelector(`.cell[data-row="${piecePos.row}"][data-col="${piecePos.col}"]`);
                         const pieceElement = cell?.querySelector('.piece');
                         if (pieceElement) {
                             pieceElement.classList.add('blinking');
@@ -801,108 +964,104 @@
             }
         }
 
+
         // 보드 업데이트
         function updateBoard() {
-            document.querySelectorAll('.cell').forEach(cell => {
-                cell.innerHTML = '';
-                const row = parseInt(cell.dataset.row);
-                const col = parseInt(cell.dataset.col);
+            document.querySelectorAll('.cell').forEach(cellElement => {
+                cellElement.innerHTML = ''; // 기존 내용 초기화 (말, 벽)
+                // cellElement.classList.remove('selected'); // 선택 표시는 클릭 핸들러와 이동 함수에서 관리
+
+                const row = parseInt(cellElement.dataset.row);
+                const col = parseInt(cellElement.dataset.col);
                 
                 // 말 렌더링
-                const piece = gameState.board[row][col];
-                if (piece !== null) {
+                const pieceData = gameState.board[row][col];
+                if (pieceData !== null) {
                     const pieceElement = document.createElement('div');
-                    pieceElement.className = `piece ${gameState.players[piece.player].color}`;
-                    cell.appendChild(pieceElement);
+                    pieceElement.className = `piece ${gameState.players[pieceData.player].color}`;
+                    cellElement.appendChild(pieceElement);
                 }
 
                 // 벽 렌더링
-                const walls = gameState.walls[row][col];
-                Object.keys(walls).forEach(direction => {
-                    if (walls[direction] !== null) {
+                const wallsData = gameState.walls[row][col];
+                Object.keys(wallsData).forEach(direction => { // top, bottom, left, right
+                    if (wallsData[direction] !== null) { // 벽 주인의 playerIndex가 저장됨
                         const wallElement = document.createElement('div');
-                        wallElement.className = `wall ${direction} ${gameState.players[walls[direction]].color}`;
-                        cell.appendChild(wallElement);
+                        // 벽의 색상은 설치한 플레이어의 색상을 따르도록
+                        wallElement.className = `wall ${direction} ${gameState.players[wallsData[direction]].color}`;
+                        cellElement.appendChild(wallElement);
                     }
                 });
             });
-
-            updateBlinkingPieces();
+            updateBlinkingPieces(); // 말 깜빡임 업데이트
+             // 선택된 말 있으면 다시 selected 클래스 추가 (updateBoard가 다 지우므로)
+            if (gameState.selectedPiece) {
+                const selectedCell = document.querySelector(`.cell[data-row="${gameState.selectedPiece.row}"][data-col="${gameState.selectedPiece.col}"]`);
+                if (selectedCell) selectedCell.classList.add('selected');
+            }
         }
 
         // 게임 리셋
-        function resetGame() {
+        window.resetGame = function() {
             clearInterval(gameState.timer);
+            gameState.gameStarted = false; // 게임 종료 상태로 설정
+
             document.getElementById('gameOverModal').style.display = 'none';
             document.getElementById('gameArea').style.display = 'none';
             document.getElementById('playerSetup').style.display = 'block';
             
+            // 플레이어 수 선택 버튼 초기화
             document.querySelectorAll('.player-count-btn').forEach(btn => {
                 btn.classList.remove('selected');
             });
-            
-            gameState.gameStarted = false;
+             // 페이지 로드 시 기본값으로 2명 선택된 것처럼 처리
+            const defaultPlayerCountButton = document.querySelector('.player-count-btn'); // 첫 번째 버튼 (2명)
+            if (defaultPlayerCountButton) {
+                defaultPlayerCountButton.classList.add('selected');
+            }
+            gameState.playerCount = 2; // gameState도 초기화
         }
 
-        // 벽 배치를 위한 터치/마우스 이벤트 처리
-        let isPlacingWall = false;
-        let wallPlacementCell = null;
+        // 벽 배치를 위한 터치 이벤트 처리
+        let touchStartPos = null; // {x, y, row, col}
 
-        // 셀에 터치/마우스 이벤트 추가 (벽 배치용)
         function addWallPlacementEvents(cell) {
-            // 마우스 이벤트
-            cell.addEventListener('mousedown', startWallPlacement);
-            cell.addEventListener('mousemove', continueWallPlacement);
-            cell.addEventListener('mouseup', endWallPlacement);
-            
             // 터치 이벤트
             cell.addEventListener('touchstart', handleTouchStart, {passive: false});
             cell.addEventListener('touchmove', handleTouchMove, {passive: false});
             cell.addEventListener('touchend', handleTouchEnd, {passive: false});
+            // 마우스 드래그로 벽 배치하는 것은 현재 미구현. 필요 시 추가.
         }
-
-        function startWallPlacement(e) {
-            if (gameState.phase === 3 && gameState.pieceMoved && 
-                e.currentTarget.classList.contains('selected')) {
-                isPlacingWall = true;
-                wallPlacementCell = e.currentTarget;
-                e.preventDefault();
-            }
-        }
-
-        function continueWallPlacement(e) {
-            if (!isPlacingWall) return;
-            e.preventDefault();
-        }
-
-        function endWallPlacement(e) {
-            if (!isPlacingWall) return;
-            isPlacingWall = false;
-            wallPlacementCell = null;
-            e.preventDefault();
-        }
-
-        // 터치 이벤트 처리
-        let touchStartPos = null;
 
         function handleTouchStart(e) {
+            const cellElement = e.currentTarget;
+            const row = parseInt(cellElement.dataset.row);
+            const col = parseInt(cellElement.dataset.col);
+
+            // 조건: 게임 플레이 단계, 말이 이미 이동했고, 클릭된 셀이 현재 선택된(이동한 말이 있는) 셀이어야 함
             if (gameState.phase === 3 && gameState.pieceMoved && 
-                e.currentTarget.classList.contains('selected')) {
+                gameState.selectedPiece && gameState.selectedPiece.row === row && gameState.selectedPiece.col === col) {
+                
                 touchStartPos = {
                     x: e.touches[0].clientX,
-                    y: e.touches[0].clientY
+                    y: e.touches[0].clientY,
+                    row: row,
+                    col: col
                 };
-                e.preventDefault();
+                // e.preventDefault(); // 스크롤 방지 등. 필요에 따라.
+            } else {
+                touchStartPos = null;
             }
         }
 
         function handleTouchMove(e) {
-            e.preventDefault();
+            if (!touchStartPos) return;
+            // e.preventDefault(); // 스크롤 방지 등.
         }
 
         function handleTouchEnd(e) {
             if (!touchStartPos) return;
-            e.preventDefault();
+            // e.preventDefault();
 
             const touchEndPos = {
                 x: e.changedTouches[0].clientX,
@@ -911,28 +1070,33 @@
 
             const deltaX = touchEndPos.x - touchStartPos.x;
             const deltaY = touchEndPos.y - touchStartPos.y;
-            const threshold = 30;
+            const threshold = 20; // 스와이프 감지 민감도
 
+            let direction = null;
             if (Math.abs(deltaX) > threshold || Math.abs(deltaY) > threshold) {
-                let direction = '';
                 if (Math.abs(deltaX) > Math.abs(deltaY)) {
                     direction = deltaX > 0 ? 'right' : 'left';
                 } else {
                     direction = deltaY > 0 ? 'bottom' : 'top';
                 }
-                
-                const row = parseInt(e.currentTarget.dataset.row);
-                const col = parseInt(e.currentTarget.dataset.col);
-                placeWallInDirection(row, col, direction);
             }
 
+            if (direction) {
+                console.log(`벽 배치 시도: (${touchStartPos.row}, ${touchStartPos.col})에 ${direction} 방향으로`);
+                placeWallInDirection(touchStartPos.row, touchStartPos.col, direction);
+            } else {
+                // 스와이프가 아닌 단순 탭으로 간주될 수 있음.
+                // 이 경우 handleCellClick에서 이미 처리되었거나, 추가적인 액션 정의 가능.
+                console.log("스와이프 감지 안됨. 단순 탭으로 간주.");
+            }
             touchStartPos = null;
         }
 
         // 특정 방향으로 벽 배치
         function placeWallInDirection(row, col, direction) {
             if (!gameState.pieceMoved) {
-                alert('먼저 말을 이동해주세요!');
+                // 이 함수는 pieceMoved 이후에만 호출되도록 설계되어야 함.
+                // alert('먼저 말을 이동해주세요!'); // 이 경고는 호출하는 쪽에서 처리하는게 나을수도
                 return;
             }
 
@@ -942,57 +1106,121 @@
                 return;
             }
 
-            if (gameState.walls[row][col][direction]) {
-                alert('이미 벽이 있는 위치입니다!');
+            // 벽 유효성 검사 (겹치는지, 인접 셀과 충돌하는지 등)
+            if (!isValidWallPlacement(row, col, direction)) {
+                // isValidWallPlacement 내부에서 alert을 하거나, 여기서 해도 됨
                 return;
             }
-
+            
+            // 벽 배치
             gameState.walls[row][col][direction] = gameState.currentPlayer;
+            // 인접 셀에도 벽 정보 기록 (벽은 두 셀에 걸쳐 있음)
+            if (direction === 'top' && row > 0) gameState.walls[row-1][col].bottom = gameState.currentPlayer;
+            else if (direction === 'bottom' && row < BOARD_SIZE - 1) gameState.walls[row+1][col].top = gameState.currentPlayer;
+            else if (direction === 'left' && col > 0) gameState.walls[row][col-1].right = gameState.currentPlayer;
+            else if (direction === 'right' && col < BOARD_SIZE - 1) gameState.walls[row][col+1].left = gameState.currentPlayer;
+            
             currentPlayerObj.wallsRemaining--;
+            console.log(`${currentPlayerObj.name} 플레이어 (${row},${col}) ${direction}에 벽 설치. 남은 벽: ${currentPlayerObj.wallsRemaining}`);
 
-            updateBoard();
-            endTurn();
+            updateBoard(); // 보드 UI 업데이트 (벽 표시)
+            endTurn(); // 벽 배치 후 턴 종료
         }
 
+        function isValidWallPlacement(row, col, direction) {
+            // 1. 해당 위치에 이미 같은 방향 벽이 있는지 확인
+            if (gameState.walls[row][col][direction] !== null) {
+                alert('이미 같은 방향에 벽이 있습니다!');
+                return false;
+            }
+
+            // 2. 교차하는 벽 확인 (예: 가로벽 놓는데 세로벽이 이미 해당 셀 모서리를 공유하며 교차하는지)
+            // Quoridor 규칙에서는 벽은 항상 두 칸에 걸쳐서 설치되며, 다른 벽과 교차할 수 없음.
+            // 현재 벽 모델은 셀의 각 변에 벽을 두는 방식.
+            // 좀 더 단순화된 모델에서는, 한 셀의 top/bottom 벽과 left/right 벽이 동시에 활성화되는 것은 교차로 간주하지 않을 수 있음.
+            // 여기서는 더 복잡한 교차 검사는 생략. (필요시 추가)
+
+            // 3. 인접 셀에 대응하는 벽이 이미 있는지 (다른 플레이어에 의해)
+            // (이 검사는 placeWallInDirection에서 이미 갱신하므로 사실상 중복일 수 있으나, 방어적으로 추가)
+            if (direction === 'top' && row > 0 && gameState.walls[row-1][col].bottom !== null) {
+                alert('인접한 곳에 이미 벽이 설치되어 있습니다 (상단).'); return false;
+            }
+            if (direction === 'bottom' && row < BOARD_SIZE - 1 && gameState.walls[row+1][col].top !== null) {
+                alert('인접한 곳에 이미 벽이 설치되어 있습니다 (하단).'); return false;
+            }
+            if (direction === 'left' && col > 0 && gameState.walls[row][col-1].right !== null) {
+                alert('인접한 곳에 이미 벽이 설치되어 있습니다 (좌측).'); return false;
+            }
+            if (direction === 'right' && col < BOARD_SIZE - 1 && gameState.walls[row][col+1].left !== null) {
+                alert('인접한 곳에 이미 벽이 설치되어 있습니다 (우측).'); return false;
+            }
+            
+            // 4. (중요) 벽을 놓았을 때 모든 플레이어가 자신의 목표 지점에 도달할 수 없는 경우가 발생하는지 확인 (Quoridor 규칙)
+            // 이 검사는 BFS/DFS 등으로 경로 탐색이 필요하여 복잡하므로 여기서는 생략.
+            // alert("경로 차단 검사는 미구현 상태입니다.");
+
+            return true;
+        }
+
+
         // 규칙 보기
-        function showRules() {
+        window.showRules = function() {
             alert(`
-🧱 Wall Go 게임 규칙
+🧱 Wall Go 게임 규칙 (v0.2 - 기본 규칙)
 
 📋 게임 개요:
-- 2-3명이 7x7 격자에서 영토를 차지하는 전략 게임
-- 각 플레이어는 2개의 말과 25개의 벽을 가집니다
+- 2-${PLAYER_COLORS.length}명이 ${BOARD_SIZE}x${BOARD_SIZE} 격자에서 경쟁하는 전략 게임.
+- 각 플레이어는 2개의 말과 ${INITIAL_WALLS_PER_PLAYER}개의 벽을 가집니다. (벽 개수는 설정에 따라 다를 수 있음)
 
 🎯 게임 진행:
-Phase 1: 첫 번째 말 배치 (순서대로)
-Phase 2: 두 번째 말 배치 (역순으로)
+Phase 1: 첫 번째 말 배치 (플레이어 순서대로)
+Phase 2: 두 번째 말 배치 (Phase 1의 역순으로)
 Phase 3: 게임 플레이
 
-⚡ 턴 제한시간: 90초
+⏱️ 턴 제한시간: ${INITIAL_TIME_LEFT}초
 
 🚶 말 이동:
-- 상하좌우로 1-2칸 이동 가능
-- 다른 말이 있는 곳으로는 이동 불가
+- 자신의 턴에 자신의 말 중 하나를 선택하여 이동.
+- 상하좌우로 1칸 또는 2칸 이동 가능.
+- 다른 말이 있는 곳이나 벽으로 막힌 곳으로는 이동 불가.
+- 2칸 이동 시, 중간 칸은 비어있어야 하고 벽으로 막혀있지 않아야 함.
 
 🧱 벽 배치:
-- 말을 이동한 후 벽 배치
-- 이동한 말을 터치하고 원하는 방향으로 스와이프
+- 말을 이동한 후, 해당 턴에 벽 1개를 설치할 수 있습니다.
+- 벽은 이동한 말이 있는 셀의 가장자리(상, 하, 좌, 우 중 하나)에 설치합니다.
+- 벽은 터치 후 스와이프하여 방향을 지정해 설치합니다.
+- 이미 벽이 있는 곳이나, 규칙에 어긋나는 곳(예: 다른 벽과 완전히 겹침)에는 설치할 수 없습니다.
+- (주의: 모든 플레이어의 말이 목표지점에 도달할 수 없도록 완전히 가두는 벽 배치는 금지되나, 현재 이 검사 로직은 미구현 상태입니다.)
 
 🔨 벽 부수기:
-- 게임당 1회만 사용 가능
+- 자신의 턴 시작 시, 말 이동 전에 사용 가능.
+- 게임당 단 1회만 사용 가능.
+- 사용 시, 기존에 설치된 벽 하나를 선택하여 제거합니다. (현재는 선택한 칸 주변의 임의 벽 제거)
+- 벽 부수기를 사용하면 해당 턴의 행동(말 이동, 벽 설치)은 할 수 없고 즉시 턴이 종료됩니다.
 
-🏆 승리 조건:
-- 모든 말이 벽으로 격리되면 게임 종료
-- 가장 큰 영토를 가진 플레이어 승리
+🏆 승리 조건 (미구현):
+- (예시) 상대방의 두 말을 모두 자신의 벽으로 완전히 고립시키는 플레이어가 승리.
+- (예시) 특정 점령 지역을 확보하거나 점수를 얻는 방식.
+- 현재 게임 종료 및 승리 조건은 구현되어 있지 않습니다. '새 게임'으로 리셋하여 플레이할 수 있습니다.
             `);
         }
 
         // 페이지 로드시 초기화
         window.addEventListener('DOMContentLoaded', () => {
-            console.log('페이지 로드 완료');
-            // 기본으로 2명 선택
-            const btn2 = document.querySelector('.player-count-btn');
-            if (btn2) {
-                btn2.click();
+            console.log('페이지 로드 완료 및 게임 설정 준비');
+            // 기본으로 2명 선택된 상태로 설정
+            const defaultPlayerCountButton = document.querySelector('.player-count-btn'); // 첫 번째 버튼 (2명)
+            if (defaultPlayerCountButton) {
+                 // selectPlayerCount(2, {target: defaultPlayerCountButton}); // event 모의 객체 전달
+                 defaultPlayerCountButton.classList.add('selected'); // 직접 클래스 추가
+                 gameState.playerCount = 2; // gameState도 초기화
+            } else {
+                gameState.playerCount = 2; // 버튼 못찾으면 기본값
             }
+            // 게임 시작 전이므로 gameArea의 UI는 아직 업데이트하지 않음
         });
+
+    })(); // IIFE 끝
+    </script>
+</body>
+</html>
