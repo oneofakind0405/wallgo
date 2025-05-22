@@ -515,6 +515,9 @@
                         handleCellClick(parseInt(this.dataset.row), parseInt(this.dataset.col), this);
                     });
                     
+                    // 벽 배치를 위한 이벤트 추가
+                    addWallPlacementEvents(cell);
+                    
                     board.appendChild(cell);
                 }
             }
@@ -841,6 +844,116 @@
             gameState.gameStarted = false;
         }
 
+        // 벽 배치를 위한 터치/마우스 이벤트 처리
+        let isPlacingWall = false;
+        let wallPlacementCell = null;
+
+        // 셀에 터치/마우스 이벤트 추가 (벽 배치용)
+        function addWallPlacementEvents(cell) {
+            // 마우스 이벤트
+            cell.addEventListener('mousedown', startWallPlacement);
+            cell.addEventListener('mousemove', continueWallPlacement);
+            cell.addEventListener('mouseup', endWallPlacement);
+            
+            // 터치 이벤트
+            cell.addEventListener('touchstart', handleTouchStart, {passive: false});
+            cell.addEventListener('touchmove', handleTouchMove, {passive: false});
+            cell.addEventListener('touchend', handleTouchEnd, {passive: false});
+        }
+
+        function startWallPlacement(e) {
+            if (gameState.phase === 3 && gameState.pieceMoved && 
+                e.currentTarget.classList.contains('selected')) {
+                isPlacingWall = true;
+                wallPlacementCell = e.currentTarget;
+                e.preventDefault();
+            }
+        }
+
+        function continueWallPlacement(e) {
+            if (!isPlacingWall) return;
+            e.preventDefault();
+        }
+
+        function endWallPlacement(e) {
+            if (!isPlacingWall) return;
+            isPlacingWall = false;
+            wallPlacementCell = null;
+            e.preventDefault();
+        }
+
+        // 터치 이벤트 처리
+        let touchStartPos = null;
+
+        function handleTouchStart(e) {
+            if (gameState.phase === 3 && gameState.pieceMoved && 
+                e.currentTarget.classList.contains('selected')) {
+                touchStartPos = {
+                    x: e.touches[0].clientX,
+                    y: e.touches[0].clientY
+                };
+                e.preventDefault();
+            }
+        }
+
+        function handleTouchMove(e) {
+            e.preventDefault();
+        }
+
+        function handleTouchEnd(e) {
+            if (!touchStartPos) return;
+            e.preventDefault();
+
+            const touchEndPos = {
+                x: e.changedTouches[0].clientX,
+                y: e.changedTouches[0].clientY
+            };
+
+            const deltaX = touchEndPos.x - touchStartPos.x;
+            const deltaY = touchEndPos.y - touchStartPos.y;
+            const threshold = 30;
+
+            if (Math.abs(deltaX) > threshold || Math.abs(deltaY) > threshold) {
+                let direction = '';
+                if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                    direction = deltaX > 0 ? 'right' : 'left';
+                } else {
+                    direction = deltaY > 0 ? 'bottom' : 'top';
+                }
+                
+                const row = parseInt(e.currentTarget.dataset.row);
+                const col = parseInt(e.currentTarget.dataset.col);
+                placeWallInDirection(row, col, direction);
+            }
+
+            touchStartPos = null;
+        }
+
+        // 특정 방향으로 벽 배치
+        function placeWallInDirection(row, col, direction) {
+            if (!gameState.pieceMoved) {
+                alert('먼저 말을 이동해주세요!');
+                return;
+            }
+
+            const currentPlayerObj = gameState.players[gameState.currentPlayer];
+            if (currentPlayerObj.wallsRemaining <= 0) {
+                alert('벽이 모두 소진되었습니다!');
+                return;
+            }
+
+            if (gameState.walls[row][col][direction]) {
+                alert('이미 벽이 있는 위치입니다!');
+                return;
+            }
+
+            gameState.walls[row][col][direction] = gameState.currentPlayer;
+            currentPlayerObj.wallsRemaining--;
+
+            updateBoard();
+            endTurn();
+        }
+
         // 규칙 보기
         function showRules() {
             alert(`
@@ -862,4 +975,24 @@ Phase 3: 게임 플레이
 - 다른 말이 있는 곳으로는 이동 불가
 
 🧱 벽 배치:
-- 말을 이동한 후 벽
+- 말을 이동한 후 벽 배치
+- 이동한 말을 터치하고 원하는 방향으로 스와이프
+
+🔨 벽 부수기:
+- 게임당 1회만 사용 가능
+
+🏆 승리 조건:
+- 모든 말이 벽으로 격리되면 게임 종료
+- 가장 큰 영토를 가진 플레이어 승리
+            `);
+        }
+
+        // 페이지 로드시 초기화
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('페이지 로드 완료');
+            // 기본으로 2명 선택
+            const btn2 = document.querySelector('.player-count-btn');
+            if (btn2) {
+                btn2.click();
+            }
+        });
